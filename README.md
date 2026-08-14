@@ -11,10 +11,10 @@
 
 ## 构建与运行
 
-在 PowerShell 执行：
+在 PowerShell 执行（此写法不受本机脚本执行策略影响）：
 
 ```powershell
-.\build.ps1
+PowerShell -ExecutionPolicy Bypass -File .\build.ps1
 .\dist\AutoColor.exe
 ```
 
