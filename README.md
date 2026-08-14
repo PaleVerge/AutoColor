@@ -21,5 +21,6 @@ PowerShell -ExecutionPolicy Bypass -File .\build.ps1
 程序只使用 Windows 自带的 .NET Framework WinForms 组件，无第三方依赖。配置保存于 `%LOCALAPPDATA%\\AutoColor\\settings.ini`；删除该文件即可恢复默认设置（上海经纬度以及 07:00 / 19:00）。
 
 ## 开发说明
+由Codex使用ChatGPT 5.6 luna模型编写。
 
 主题由 `AppsUseLightTheme` 和 `SystemUsesLightTheme` 两个当前用户注册表值控制。日出日落使用 NOAA 近似太阳位置算法；极昼、极夜时回退为 06:00/18:00。
