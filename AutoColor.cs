@@ -3,6 +3,7 @@ using System.Drawing;
 using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Windows.Forms;
 using Microsoft.Win32;
 
@@ -10,7 +11,15 @@ namespace AutoColor
 {
     internal static class Program
     {
-        [STAThread] private static void Main() { Application.EnableVisualStyles(); Application.SetCompatibleTextRenderingDefault(false); Application.Run(new TrayApplication()); }
+        [STAThread] private static void Main()
+        {
+            bool created;
+            using (Mutex instance = new Mutex(true, "AutoColor.Win11.ThemeSwitcher", out created))
+            {
+                if (!created) return;
+                Application.EnableVisualStyles(); Application.SetCompatibleTextRenderingDefault(false); Application.Run(new TrayApplication());
+            }
+        }
     }
 
     internal sealed class Settings
