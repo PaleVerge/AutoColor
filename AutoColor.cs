@@ -11,12 +11,15 @@ namespace AutoColor
 {
     internal static class Program
     {
+        [DllImport("user32.dll")] private static extern bool SetProcessDPIAware();
         [STAThread] private static void Main()
         {
             bool created;
             using (Mutex instance = new Mutex(true, "AutoColor.Win11.ThemeSwitcher", out created))
             {
                 if (!created) return;
+                if (Environment.OSVersion.Version.Major >= 6)
+                    SetProcessDPIAware();
                 Application.EnableVisualStyles(); Application.SetCompatibleTextRenderingDefault(false); Application.Run(new TrayApplication());
             }
         }
@@ -64,23 +67,126 @@ namespace AutoColor
 
     internal sealed class SettingsForm : Form
     {
-        private readonly RadioButton fixedMode = new RadioButton { Text = "按自定义时间" }, sunMode = new RadioButton { Text = "跟随日出 / 日落" };
-        private readonly TextBox dayTime = new TextBox(), nightTime = new TextBox(), latitude = new TextBox(), longitude = new TextBox(); private readonly CheckBox startup = new CheckBox { Text = "开机时自动启动（当前用户）" }; internal Settings Value { get; private set; }
+        private readonly RadioButton fixedMode = new RadioButton { Text = "按自定义时间", AutoSize = true }, sunMode = new RadioButton { Text = "跟随日出 / 日落", AutoSize = true };
+        private readonly TextBox dayTime = new TextBox(), nightTime = new TextBox(), latitude = new TextBox(), longitude = new TextBox();
+        private readonly CheckBox startup = new CheckBox { Text = "开机时自动启动（当前用户）", AutoSize = true };
+        internal Settings Value { get; private set; }
+
         internal SettingsForm(Settings source)
         {
-            Text = "Auto Color 设置"; FormBorderStyle = FormBorderStyle.FixedDialog; MaximizeBox = false; MinimizeBox = false; ShowInTaskbar = false; ClientSize = new Size(385, 260); Font = SystemFonts.MessageBoxFont;
-            fixedMode.Location = new Point(18, 18); fixedMode.Checked = !source.FollowSun; sunMode.Location = new Point(18, 89); sunMode.Checked = source.FollowSun;
-            AddLabel("日间主题开始（HH:mm）", 38); dayTime.Location = new Point(205, 35); dayTime.Size = new Size(90, 23); dayTime.Text = source.DayTime;
-            AddLabel("夜间主题开始（HH:mm）", 63); nightTime.Location = new Point(205, 60); nightTime.Size = new Size(90, 23); nightTime.Text = source.NightTime;
-            AddLabel("纬度（北纬为正）", 109); latitude.Location = new Point(205, 106); latitude.Size = new Size(90, 23); latitude.Text = source.Latitude.ToString(CultureInfo.InvariantCulture);
-            AddLabel("经度（东经为正）", 134); longitude.Location = new Point(205, 131); longitude.Size = new Size(90, 23); longitude.Text = source.Longitude.ToString(CultureInfo.InvariantCulture);
-            startup.Location = new Point(18, 169); startup.Checked = source.StartWithWindows;
-            Button ok = new Button { Text = "保存", DialogResult = DialogResult.OK, Location = new Point(207, 213), Size = new Size(75, 27) }, cancel = new Button { Text = "取消", DialogResult = DialogResult.Cancel, Location = new Point(292, 213), Size = new Size(75, 27) };
-            Controls.AddRange(new Control[] { fixedMode, sunMode, dayTime, nightTime, latitude, longitude, startup, ok, cancel }); AcceptButton = ok; CancelButton = cancel; ok.Click += delegate { Save(); }; fixedMode.CheckedChanged += delegate { UpdateMode(); }; UpdateMode();
+            Text = "Auto Color 设置";
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            MaximizeBox = false;
+            MinimizeBox = false;
+            ShowInTaskbar = false;
+            AutoScaleMode = AutoScaleMode.Font;
+            AutoScaleDimensions = new SizeF(6f, 13f);
+            Font = SystemFonts.MessageBoxFont;
+            StartPosition = FormStartPosition.CenterScreen;
+            AutoSize = true;
+            AutoSizeMode = AutoSizeMode.GrowAndShrink;
+
+            fixedMode.Checked = !source.FollowSun;
+            sunMode.Checked = source.FollowSun;
+            startup.Checked = source.StartWithWindows;
+            dayTime.Text = source.DayTime;
+            nightTime.Text = source.NightTime;
+            latitude.Text = source.Latitude.ToString(CultureInfo.InvariantCulture);
+            longitude.Text = source.Longitude.ToString(CultureInfo.InvariantCulture);
+            foreach (TextBox tb in new[] { dayTime, nightTime, latitude, longitude })
+            {
+                tb.Width = 120;
+                tb.Anchor = AnchorStyles.Left;
+            }
+
+            TableLayoutPanel root = new TableLayoutPanel
+            {
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                ColumnCount = 1,
+                Dock = DockStyle.Fill,
+                Padding = new Padding(16),
+                GrowStyle = TableLayoutPanelGrowStyle.AddRows
+            };
+            root.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+
+            root.Controls.Add(fixedMode, 0, root.RowCount++);
+            root.Controls.Add(Row("日间主题开始（HH:mm）", dayTime), 0, root.RowCount++);
+            root.Controls.Add(Row("夜间主题开始（HH:mm）", nightTime), 0, root.RowCount++);
+            root.Controls.Add(sunMode, 0, root.RowCount++);
+            root.Controls.Add(Row("纬度（北纬为正）", latitude), 0, root.RowCount++);
+            root.Controls.Add(Row("经度（东经为正）", longitude), 0, root.RowCount++);
+            root.Controls.Add(startup, 0, root.RowCount++);
+
+            FlowLayoutPanel buttons = new FlowLayoutPanel
+            {
+                AutoSize = true,
+                FlowDirection = FlowDirection.RightToLeft,
+                WrapContents = false,
+                Anchor = AnchorStyles.Right,
+                Padding = new Padding(0, 12, 0, 0)
+            };
+            Button ok = new Button { Text = "保存", DialogResult = DialogResult.OK, AutoSize = true, MinimumSize = new Size(88, 30) };
+            Button cancel = new Button { Text = "取消", DialogResult = DialogResult.Cancel, AutoSize = true, MinimumSize = new Size(88, 30) };
+            buttons.Controls.Add(cancel);
+            buttons.Controls.Add(ok);
+            root.Controls.Add(buttons, 0, root.RowCount++);
+
+            Controls.Add(root);
+            AcceptButton = ok;
+            CancelButton = cancel;
+            ok.Click += delegate { Save(); };
+            fixedMode.CheckedChanged += delegate { UpdateMode(); };
+            UpdateMode();
         }
-        private void AddLabel(string text, int y) { Controls.Add(new Label { Text = text, Location = new Point(38, y), AutoSize = true }); }
-        private void UpdateMode() { dayTime.Enabled = nightTime.Enabled = fixedMode.Checked; latitude.Enabled = longitude.Enabled = sunMode.Checked; }
-        private void Save() { TimeSpan ignored; double lat, lng; if (!TimeSpan.TryParse(dayTime.Text, out ignored) || !TimeSpan.TryParse(nightTime.Text, out ignored) || !Double.TryParse(latitude.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out lat) || !Double.TryParse(longitude.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) { MessageBox.Show("请填写有效时间（HH:mm）与经纬度。", "Auto Color", MessageBoxButtons.OK, MessageBoxIcon.Warning); DialogResult = DialogResult.None; return; } Value = new Settings { FollowSun = sunMode.Checked, DayTime = dayTime.Text, NightTime = nightTime.Text, Latitude = lat, Longitude = lng, StartWithWindows = startup.Checked }; }
+
+        private static Control Row(string labelText, Control field)
+        {
+            TableLayoutPanel row = new TableLayoutPanel
+            {
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                ColumnCount = 2,
+                Margin = new Padding(18, 4, 0, 4),
+                Dock = DockStyle.Fill
+            };
+            row.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            row.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            Label label = new Label { Text = labelText, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 6, 16, 0) };
+            row.Controls.Add(label, 0, 0);
+            row.Controls.Add(field, 1, 0);
+            return row;
+        }
+
+        private void UpdateMode()
+        {
+            dayTime.Enabled = nightTime.Enabled = fixedMode.Checked;
+            latitude.Enabled = longitude.Enabled = sunMode.Checked;
+        }
+
+        private void Save()
+        {
+            TimeSpan ignored;
+            double lat, lng;
+            if (!TimeSpan.TryParse(dayTime.Text, out ignored) || !TimeSpan.TryParse(nightTime.Text, out ignored)
+                || !Double.TryParse(latitude.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out lat)
+                || !Double.TryParse(longitude.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out lng)
+                || lat < -90 || lat > 90 || lng < -180 || lng > 180)
+            {
+                MessageBox.Show("请填写有效时间（HH:mm）与经纬度。", "Auto Color", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                DialogResult = DialogResult.None;
+                return;
+            }
+            Value = new Settings
+            {
+                FollowSun = sunMode.Checked,
+                DayTime = dayTime.Text,
+                NightTime = nightTime.Text,
+                Latitude = lat,
+                Longitude = lng,
+                StartWithWindows = startup.Checked
+            };
+        }
     }
 
     internal static class Startup { internal static void SetEnabled(bool enabled) { using (RegistryKey key = Registry.CurrentUser.OpenSubKey("Software\\Microsoft\\Windows\\CurrentVersion\\Run", true)) { if (enabled) key.SetValue("AutoColor", "\"" + Application.ExecutablePath + "\""); else key.DeleteValue("AutoColor", false); } } }
