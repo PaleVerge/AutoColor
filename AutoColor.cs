@@ -52,8 +52,9 @@ namespace AutoColor
         {
             settings = Settings.Load(); icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); tray = new NotifyIcon { Icon = icon, Text = "Auto Color", Visible = true };
             ContextMenuStrip menu = new ContextMenuStrip(); menu.Items.Add("立即切换为日间主题", null, delegate { Theme.Apply(true); Reschedule(); }); menu.Items.Add("立即切换为夜间主题", null, delegate { Theme.Apply(false); Reschedule(); }); menu.Items.Add(new ToolStripSeparator()); menu.Items.Add("设置…", null, delegate { ShowSettings(); }); menu.Items.Add("退出", null, delegate { Quit(); }); tray.ContextMenuStrip = menu; tray.DoubleClick += delegate { ShowSettings(); };
-            timer = new System.Threading.Timer(delegate { OnTimer(); }, null, System.Threading.Timeout.Infinite, System.Threading.Timeout.Infinite); Reschedule(); ApplyForNow();
+            timer = new System.Threading.Timer(delegate { OnTimer(); }, null, System.Threading.Timeout.Infinite, System.Threading.Timeout.Infinite); SystemEvents.PowerModeChanged += OnPowerModeChanged; SystemEvents.TimeChanged += delegate { OnTimer(); }; Reschedule(); ApplyForNow();
         }
+        private void OnPowerModeChanged(object sender, PowerModeChangedEventArgs e) { if (e.Mode != PowerModes.Resume) return; OnTimer(); }
         private void OnTimer() { if (quitting) return; try { ApplyForNow(); } finally { Reschedule(); } }
         private void ApplyForNow() { DateTime now = DateTime.Now, day, night; GetSchedule(now.Date, out day, out night); Theme.Apply(IsDaytime(now, day, night)); }
         private static bool IsDaytime(DateTime now, DateTime day, DateTime night) { return day <= night ? now >= day && now < night : now >= day || now < night; }
@@ -62,7 +63,7 @@ namespace AutoColor
         private void Reschedule()
         { if (quitting) return; DateTime now = DateTime.Now, day, night; GetSchedule(now.Date, out day, out night); DateTime next = day > now ? day : (night > now ? night : DateTime.MinValue); if (next == DateTime.MinValue) { GetSchedule(now.Date.AddDays(1), out day, out night); next = day < night ? day : night; } TimeSpan due = next - now + TimeSpan.FromSeconds(1); if (due < TimeSpan.FromSeconds(1)) due = TimeSpan.FromSeconds(1); timer.Change(due, System.Threading.Timeout.InfiniteTimeSpan); }
         private void ShowSettings() { using (SettingsForm form = new SettingsForm(settings)) { if (form.ShowDialog() != DialogResult.OK) return; settings = form.Value; settings.Save(); Startup.SetEnabled(settings.StartWithWindows); ApplyForNow(); Reschedule(); } }
-        private void Quit() { quitting = true; timer.Dispose(); tray.Visible = false; tray.Dispose(); icon.Dispose(); ExitThread(); }
+        private void Quit() { quitting = true; SystemEvents.PowerModeChanged -= OnPowerModeChanged; timer.Dispose(); tray.Visible = false; tray.Dispose(); icon.Dispose(); ExitThread(); }
     }
 
     internal sealed class SettingsForm : Form
