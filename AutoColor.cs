@@ -31,18 +31,54 @@ namespace AutoColor
         internal string DayTime = "07:00", NightTime = "19:00";
         internal double Latitude = 31.2304, Longitude = 121.4737;
         private static readonly string FileName = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AutoColor", "settings.ini");
+        internal static readonly TimeSpan DefaultDay = new TimeSpan(7, 0, 0), DefaultNight = new TimeSpan(19, 0, 0);
+        private static readonly string[] ClockFormats = { @"h\:mm", @"hh\:mm", @"h\:mm\:ss", @"hh\:mm\:ss" };
+        internal static bool TryParseClock(string text, out TimeSpan time)
+        {
+            time = TimeSpan.Zero;
+            if (String.IsNullOrEmpty(text)) return false;
+            TimeSpan parsed;
+            if (!TimeSpan.TryParseExact(text.Trim(), ClockFormats, CultureInfo.InvariantCulture, out parsed)) return false;
+            if (parsed < TimeSpan.Zero || parsed >= TimeSpan.FromHours(24)) return false;
+            time = parsed;
+            return true;
+        }
+        internal static string FormatClock(TimeSpan time) { return time.ToString(@"hh\:mm", CultureInfo.InvariantCulture); }
         internal static Settings Load()
         {
-            Settings r = new Settings(); if (!File.Exists(FileName)) return r;
-            foreach (string line in File.ReadAllLines(FileName)) { int i = line.IndexOf('='); if (i < 1) continue; string k = line.Substring(0, i), v = line.Substring(i + 1); bool b; double d;
-                if (k == "FollowSun" && Boolean.TryParse(v, out b)) r.FollowSun = b;
-                else if (k == "StartWithWindows" && Boolean.TryParse(v, out b)) r.StartWithWindows = b;
-                else if (k == "DayTime") r.DayTime = v; else if (k == "NightTime") r.NightTime = v;
-                else if (k == "Latitude" && Double.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out d)) r.Latitude = d;
-                else if (k == "Longitude" && Double.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out d)) r.Longitude = d; }
+            Settings r = new Settings();
+            try
+            {
+                if (!File.Exists(FileName)) return r;
+                foreach (string line in File.ReadAllLines(FileName))
+                {
+                    int i = line.IndexOf('='); if (i < 1) continue;
+                    string k = line.Substring(0, i), v = line.Substring(i + 1);
+                    bool b; double d;
+                    if (k == "FollowSun" && Boolean.TryParse(v, out b)) r.FollowSun = b;
+                    else if (k == "StartWithWindows" && Boolean.TryParse(v, out b)) r.StartWithWindows = b;
+                    else if (k == "DayTime") r.DayTime = v;
+                    else if (k == "NightTime") r.NightTime = v;
+                    else if (k == "Latitude" && Double.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out d)) r.Latitude = d;
+                    else if (k == "Longitude" && Double.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out d)) r.Longitude = d;
+                }
+            }
+            catch { /* corrupt or unreadable settings: keep defaults */ }
             return r;
         }
-        internal void Save() { Directory.CreateDirectory(Path.GetDirectoryName(FileName)); File.WriteAllLines(FileName, new[] { "FollowSun=" + FollowSun, "DayTime=" + DayTime, "NightTime=" + NightTime, "Latitude=" + Latitude.ToString(CultureInfo.InvariantCulture), "Longitude=" + Longitude.ToString(CultureInfo.InvariantCulture), "StartWithWindows=" + StartWithWindows }); }
+        internal void Save()
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(FileName));
+            File.WriteAllLines(FileName, new[]
+            {
+                "FollowSun=" + FollowSun,
+                "DayTime=" + DayTime,
+                "NightTime=" + NightTime,
+                "Latitude=" + Latitude.ToString(CultureInfo.InvariantCulture),
+                "Longitude=" + Longitude.ToString(CultureInfo.InvariantCulture),
+                "StartWithWindows=" + StartWithWindows
+            });
+        }
     }
 
     internal sealed class TrayApplication : ApplicationContext
@@ -50,20 +86,62 @@ namespace AutoColor
         private readonly NotifyIcon tray; private readonly System.Threading.Timer timer; private readonly Icon icon; private Settings settings; private bool quitting;
         internal TrayApplication()
         {
-            settings = Settings.Load(); icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); tray = new NotifyIcon { Icon = icon, Text = "Auto Color", Visible = true };
+            settings = Settings.Load();
+            Icon extracted = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+            icon = extracted != null ? extracted : (Icon)SystemIcons.Application.Clone();
+            tray = new NotifyIcon { Icon = icon, Text = "Auto Color", Visible = true };
             ContextMenuStrip menu = new ContextMenuStrip(); menu.Items.Add("立即切换为日间主题", null, delegate { Theme.Apply(true); Reschedule(); }); menu.Items.Add("立即切换为夜间主题", null, delegate { Theme.Apply(false); Reschedule(); }); menu.Items.Add(new ToolStripSeparator()); menu.Items.Add("设置…", null, delegate { ShowSettings(); }); menu.Items.Add("退出", null, delegate { Quit(); }); tray.ContextMenuStrip = menu; tray.DoubleClick += delegate { ShowSettings(); };
-            timer = new System.Threading.Timer(delegate { OnTimer(); }, null, System.Threading.Timeout.Infinite, System.Threading.Timeout.Infinite); SystemEvents.PowerModeChanged += OnPowerModeChanged; SystemEvents.TimeChanged += delegate { OnTimer(); }; Reschedule(); ApplyForNow();
+            timer = new System.Threading.Timer(delegate { OnTimer(); }, null, System.Threading.Timeout.Infinite, System.Threading.Timeout.Infinite); SystemEvents.PowerModeChanged += OnPowerModeChanged; SystemEvents.TimeChanged += OnTimeChanged; Reschedule(); ApplyForNow();
         }
         private void OnPowerModeChanged(object sender, PowerModeChangedEventArgs e) { if (e.Mode != PowerModes.Resume) return; OnTimer(); }
-        private void OnTimer() { if (quitting) return; try { ApplyForNow(); } finally { Reschedule(); } }
-        private void ApplyForNow() { DateTime now = DateTime.Now, day, night; GetSchedule(now.Date, out day, out night); Theme.Apply(IsDaytime(now, day, night)); }
+        private void OnTimeChanged(object sender, EventArgs e) { OnTimer(); }
+        private void OnTimer()
+        {
+            if (quitting) return;
+            try { ApplyForNow(); }
+            finally { SafeReschedule(); }
+        }
+        private void SafeReschedule() { try { Reschedule(); } catch (ObjectDisposedException) { } catch (InvalidOperationException) { } }
+        private void ApplyForNow()
+        {
+            try
+            {
+                DateTime now = DateTime.Now, day, night;
+                GetSchedule(now.Date, out day, out night);
+                Theme.Apply(IsDaytime(now, day, night));
+            }
+            catch { /* registry or schedule failure: keep running */ }
+        }
         private static bool IsDaytime(DateTime now, DateTime day, DateTime night) { return day <= night ? now >= day && now < night : now >= day || now < night; }
         private void GetSchedule(DateTime date, out DateTime day, out DateTime night)
-        { if (settings.FollowSun) { day = SunTimes.GetSunrise(date, settings.Latitude, settings.Longitude); night = SunTimes.GetSunset(date, settings.Latitude, settings.Longitude); return; } TimeSpan d, n; if (!TimeSpan.TryParse(settings.DayTime, out d)) d = new TimeSpan(7, 0, 0); if (!TimeSpan.TryParse(settings.NightTime, out n)) n = new TimeSpan(19, 0, 0); day = date.Add(d); night = date.Add(n); }
+        {
+            if (settings.FollowSun) { day = SunTimes.GetSunrise(date, settings.Latitude, settings.Longitude); night = SunTimes.GetSunset(date, settings.Latitude, settings.Longitude); return; }
+            TimeSpan d, n;
+            if (!Settings.TryParseClock(settings.DayTime, out d)) d = Settings.DefaultDay;
+            if (!Settings.TryParseClock(settings.NightTime, out n)) n = Settings.DefaultNight;
+            day = date.Add(d); night = date.Add(n);
+        }
         private void Reschedule()
-        { if (quitting) return; DateTime now = DateTime.Now, day, night; GetSchedule(now.Date, out day, out night); DateTime next = day > now ? day : (night > now ? night : DateTime.MinValue); if (next == DateTime.MinValue) { GetSchedule(now.Date.AddDays(1), out day, out night); next = day < night ? day : night; } TimeSpan due = next - now + TimeSpan.FromSeconds(1); if (due < TimeSpan.FromSeconds(1)) due = TimeSpan.FromSeconds(1); timer.Change(due, System.Threading.Timeout.InfiniteTimeSpan); }
-        private void ShowSettings() { using (SettingsForm form = new SettingsForm(settings)) { if (form.ShowDialog() != DialogResult.OK) return; settings = form.Value; settings.Save(); Startup.SetEnabled(settings.StartWithWindows); ApplyForNow(); Reschedule(); } }
-        private void Quit() { quitting = true; SystemEvents.PowerModeChanged -= OnPowerModeChanged; timer.Dispose(); tray.Visible = false; tray.Dispose(); icon.Dispose(); ExitThread(); }
+        {
+            if (quitting) return;
+            DateTime now = DateTime.Now, day, night;
+            GetSchedule(now.Date, out day, out night);
+            DateTime next = day > now ? day : (night > now ? night : DateTime.MinValue);
+            if (next == DateTime.MinValue) { GetSchedule(now.Date.AddDays(1), out day, out night); next = day < night ? day : night; }
+            TimeSpan due = next - now + TimeSpan.FromSeconds(1);
+            if (due < TimeSpan.FromSeconds(1)) due = TimeSpan.FromSeconds(1);
+            timer.Change(due, System.Threading.Timeout.InfiniteTimeSpan);
+        }
+        private void ShowSettings() { using (SettingsForm form = new SettingsForm(settings)) { if (form.ShowDialog() != DialogResult.OK || form.Value == null) return; settings = form.Value; try { settings.Save(); Startup.SetEnabled(settings.StartWithWindows); } catch { } ApplyForNow(); Reschedule(); } }
+        private void Quit()
+        {
+            quitting = true;
+            SystemEvents.PowerModeChanged -= OnPowerModeChanged;
+            SystemEvents.TimeChanged -= OnTimeChanged;
+            try { timer.Change(System.Threading.Timeout.Infinite, System.Threading.Timeout.Infinite); } catch (ObjectDisposedException) { }
+            try { timer.Dispose(); } catch (ObjectDisposedException) { }
+            tray.Visible = false; tray.Dispose(); icon.Dispose(); ExitThread();
+        }
     }
 
     internal sealed class SettingsForm : Form
@@ -167,22 +245,36 @@ namespace AutoColor
 
         private void Save()
         {
-            TimeSpan ignored;
-            double lat, lng;
-            if (!TimeSpan.TryParse(dayTime.Text, out ignored) || !TimeSpan.TryParse(nightTime.Text, out ignored)
-                || !Double.TryParse(latitude.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out lat)
-                || !Double.TryParse(longitude.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out lng)
-                || lat < -90 || lat > 90 || lng < -180 || lng > 180)
+            TimeSpan day = Settings.DefaultDay, night = Settings.DefaultNight;
+            double lat = 31.2304, lng = 121.4737;
+            TimeSpan parsedDay = default(TimeSpan), parsedNight = default(TimeSpan);
+            double parsedLat = 0, parsedLng = 0;
+            bool timesOk = Settings.TryParseClock(dayTime.Text, out parsedDay) && Settings.TryParseClock(nightTime.Text, out parsedNight);
+            bool geoOk = Double.TryParse(latitude.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out parsedLat)
+                && Double.TryParse(longitude.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out parsedLng)
+                && parsedLat >= -90 && parsedLat <= 90 && parsedLng >= -180 && parsedLng <= 180;
+
+            if (fixedMode.Checked && !timesOk)
             {
-                MessageBox.Show("请填写有效时间（HH:mm）与经纬度。", "Auto Color", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show("请填写有效时间（HH:mm，00:00–23:59）。", "Auto Color", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 DialogResult = DialogResult.None;
                 return;
             }
+            if (sunMode.Checked && !geoOk)
+            {
+                MessageBox.Show("请填写有效经纬度（纬度 -90–90，经度 -180–180）。", "Auto Color", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                DialogResult = DialogResult.None;
+                return;
+            }
+
+            if (timesOk) { day = parsedDay; night = parsedNight; }
+            if (geoOk) { lat = parsedLat; lng = parsedLng; }
+
             Value = new Settings
             {
                 FollowSun = sunMode.Checked,
-                DayTime = dayTime.Text,
-                NightTime = nightTime.Text,
+                DayTime = Settings.FormatClock(day),
+                NightTime = Settings.FormatClock(night),
                 Latitude = lat,
                 Longitude = lng,
                 StartWithWindows = startup.Checked
@@ -190,7 +282,7 @@ namespace AutoColor
         }
     }
 
-    internal static class Startup { internal static void SetEnabled(bool enabled) { using (RegistryKey key = Registry.CurrentUser.OpenSubKey("Software\\Microsoft\\Windows\\CurrentVersion\\Run", true)) { if (enabled) key.SetValue("AutoColor", "\"" + Application.ExecutablePath + "\""); else key.DeleteValue("AutoColor", false); } } }
+    internal static class Startup { internal static void SetEnabled(bool enabled) { using (RegistryKey key = Registry.CurrentUser.CreateSubKey("Software\\Microsoft\\Windows\\CurrentVersion\\Run")) { if (key == null) return; if (enabled) key.SetValue("AutoColor", "\"" + Application.ExecutablePath + "\""); else key.DeleteValue("AutoColor", false); } } }
     internal static class Theme
     {
         [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint msg, UIntPtr wParam, string lParam, uint flags, uint timeout, out UIntPtr result);
@@ -200,7 +292,34 @@ namespace AutoColor
     {
         internal static DateTime GetSunrise(DateTime d, double lat, double lng) { return Calculate(d, lat, lng, true); } internal static DateTime GetSunset(DateTime d, double lat, double lng) { return Calculate(d, lat, lng, false); }
         private static DateTime Calculate(DateTime date, double latitude, double longitude, bool sunrise)
-        { int n = date.DayOfYear; double lngHour = longitude / 15.0, t = n + ((sunrise ? 6 : 18) - lngHour) / 24.0, m = 0.9856 * t - 3.289, l = Normalize(m + 1.916 * Math.Sin(Rad(m)) + .020 * Math.Sin(2 * Rad(m)) + 282.634, 360), ra = Normalize(Deg(Math.Atan(.91764 * Math.Tan(Rad(l)))), 360), lq = Math.Floor(l / 90) * 90, raq = Math.Floor(ra / 90) * 90; ra = (ra + lq - raq) / 15; double sinDec = .39782 * Math.Sin(Rad(l)), cosDec = Math.Cos(Math.Asin(sinDec)), cosH = (Math.Cos(Rad(90.833)) - sinDec * Math.Sin(Rad(latitude))) / (cosDec * Math.Cos(Rad(latitude))); if (cosH > 1 || cosH < -1) return date.Add(sunrise ? new TimeSpan(6, 0, 0) : new TimeSpan(18, 0, 0)); double h = sunrise ? 360 - Deg(Math.Acos(cosH)) : Deg(Math.Acos(cosH)); h /= 15; double localHours = Normalize(h + ra - .06571 * t - 6.622 - lngHour, 24) + TimeZoneInfo.Local.GetUtcOffset(date).TotalHours; return date.AddHours(Normalize(localHours, 24)); }
+        {
+            int n = date.DayOfYear;
+            double lngHour = longitude / 15.0;
+            double t = n + ((sunrise ? 6 : 18) - lngHour) / 24.0;
+            double m = 0.9856 * t - 3.289;
+            double l = Normalize(m + 1.916 * Math.Sin(Rad(m)) + .020 * Math.Sin(2 * Rad(m)) + 282.634, 360);
+            double ra = Normalize(Deg(Math.Atan(.91764 * Math.Tan(Rad(l)))), 360);
+            double lq = Math.Floor(l / 90) * 90, raq = Math.Floor(ra / 90) * 90;
+            ra = (ra + lq - raq) / 15;
+            double sinDec = .39782 * Math.Sin(Rad(l)), cosDec = Math.Cos(Math.Asin(sinDec));
+            double cosH = (Math.Cos(Rad(90.833)) - sinDec * Math.Sin(Rad(latitude))) / (cosDec * Math.Cos(Rad(latitude)));
+            if (cosH > 1 || cosH < -1)
+            {
+                // No rise/set event: distinguish midnight sun (polar day) from polar night
+                // by whether the sun stays above the horizon at local midnight.
+                double sinAltMidnight = sinDec * Math.Sin(Rad(latitude)) - cosDec * Math.Cos(Rad(latitude));
+                bool polarDay = sinAltMidnight > Math.Sin(Rad(-0.833));
+                if (polarDay) return sunrise ? date : date.AddDays(1); // always day
+                return date; // both equal → always night
+            }
+            double h = sunrise ? 360 - Deg(Math.Acos(cosH)) : Deg(Math.Acos(cosH));
+            h /= 15;
+            double ut = Normalize(h + ra - .06571 * t - 6.622 - lngHour, 24);
+            // Use a provisional noon offset, then refine with the offset at the event itself (DST).
+            double localHours = Normalize(ut + TimeZoneInfo.Local.GetUtcOffset(date.AddHours(12)).TotalHours, 24);
+            DateTime approx = date.AddHours(localHours);
+            return date.AddHours(Normalize(ut + TimeZoneInfo.Local.GetUtcOffset(approx).TotalHours, 24));
+        }
         private static double Rad(double v) { return v * Math.PI / 180; } private static double Deg(double v) { return v * 180 / Math.PI; } private static double Normalize(double v, double max) { v %= max; return v < 0 ? v + max : v; }
     }
 }

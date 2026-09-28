@@ -23,4 +23,4 @@ PowerShell -ExecutionPolicy Bypass -File .\build.ps1
 ## 开发说明
 由Codex使用ChatGPT 5.6 Terra模型编写。
 
-主题由 `AppsUseLightTheme` 和 `SystemUsesLightTheme` 两个当前用户注册表值控制。日出日落使用 NOAA 近似太阳位置算法；极昼、极夜时回退为 06:00/18:00。
+主题由 `AppsUseLightTheme` 和 `SystemUsesLightTheme` 两个当前用户注册表值控制。日出日落使用 NOAA 近似太阳位置算法；极昼时全天使用日间主题，极夜时全天使用夜间主题。其它程序或用户手动切换主题后，会等到下一次计划切换点才被覆盖。

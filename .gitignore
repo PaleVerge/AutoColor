@@ -1,5 +1,6 @@
 dist/
 .vs/
+.idea/
 bin/
 obj/
 *.user
